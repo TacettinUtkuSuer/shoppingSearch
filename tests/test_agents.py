@@ -65,3 +65,26 @@ def test_auditor_computes_unit_price_in_python():
     assert r.dynamic_attributes == {"battery_capacity": "1200mAh"}
     assert "parsed_price: 499.0" in seen["prompt"]
     assert len(seen["prompt"].split()) < 900  # isolated, minimal context
+
+
+def test_resolver_returns_cleaned_requirements():
+    out = {"needs_clarification": False, "search_terms": ["pump"], "negative_keywords": [],
+           "requirements": ["  19 L  capacity", "Type-C", "type-c", "a", "b", "c", "d", "e"]}
+    r = agents.resolve("pump", runner=lambda p: json.dumps(out))
+    assert r.requirements == ["19 L capacity", "Type-C", "a", "b", "c", "d"]
+
+
+def test_auditor_prompt_contains_the_request_and_requires_a_match_score():
+    page = prune_html(fixture_text("product_page.html"), "https://www.shop-a.com/pump-123")
+    request = {"description": "su pompasi damacana icin", "requirements": ["19 L", "Type-C"]}
+    prompts = []
+    outputs = iter(['{"trust_score": 50}', '{"trust_score": 50, "match_score": 135, "unmet_requirements": "Type-C"}'])
+
+    def runner(prompt):
+        prompts.append(prompt)
+        return next(outputs)
+
+    r = agents.audit(page, request, runner=runner)
+    assert len(prompts) == 2  # missing match_score triggered the corrective retry
+    assert "su pompasi damacana icin" in prompts[0] and '"Type-C"' in prompts[0]
+    assert r.match_score == 100 and r.unmet_requirements == ["Type-C"]

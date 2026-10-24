@@ -151,3 +151,29 @@ def test_long_reviews_are_trimmed_fairly_within_word_budget():
     assert page.word_count <= 300
     assert "Short honest review, works." in page.text
     assert page.text.count("really") > 40  # long reviews keep a fair share, not 5 words
+
+
+def _listing(n, markers=0, ld=False):
+    links = "".join(f'<a href="/urun/pompa-{i}-p-{1000000 + i}">Pompa {i}</a>' for i in range(n))
+    buy = '<button class="add-to-cart">Sepete ekle</button>' * markers
+    product_ld = '<script type="application/ld+json">{"@type":"Product","name":"X"}</script>' if ld else ""
+    return f"<html><head>{product_ld}</head><body><h1>Su pompaları</h1><span class='price'>99 TL</span>{links}{buy}</body></html>"
+
+
+def test_category_page_is_a_listing_even_though_it_shows_a_price():
+    page = prune_html(_listing(15), "https://shop.com/c/su-pompasi")
+    assert page.is_listing and not page.looks_like_product()
+    assert len(page.listing_links) == scraper.config.LISTING_LINKS_PER_PAGE
+    assert page.listing_links[0] == "https://shop.com/urun/pompa-0-p-1000000"
+
+
+def test_product_page_with_related_products_is_not_a_listing():
+    assert not prune_html(_listing(15, markers=1), "https://shop.com/urun/x-p-5").is_listing
+    assert not prune_html(_listing(15, ld=True), "https://shop.com/urun/x-p-5").is_listing
+    assert prune_html(_listing(15, markers=15), "https://shop.com/c/y").is_listing  # one buy button per card
+
+
+def test_listing_links_stay_on_the_same_site():
+    html = _listing(3) + '<a href="https://other.com/urun/a-p-1234567">x</a>' * 10
+    page = prune_html(html, "https://shop.com/c/y")
+    assert not page.is_listing  # only 3 same-site links

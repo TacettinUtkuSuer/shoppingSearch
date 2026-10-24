@@ -58,6 +58,9 @@ RATE_LIMIT_STATUS_CODES = (403, 429, 503)
 SEARCH_ENDPOINT = os.getenv("SEARCH_ENDPOINT", "https://html.duckduckgo.com/html/")
 SEARCH_REGION = os.getenv("SEARCH_REGION", "wt-wt")
 SEARCH_RESULTS_PER_QUERY = _env_int("SEARCH_RESULTS_PER_QUERY", 25)
+# Only the first N negatives become -operators (more starves the result list); all of them
+# are still enforced in Python on every result.
+SEARCH_MAX_NEGATIVE_OPERATORS = _env_int("SEARCH_MAX_NEGATIVE_OPERATORS", 3)
 EXCLUDED_DOMAINS = (
     "duckduckgo.com",
     "youtube.com",
@@ -72,6 +75,16 @@ EXCLUDED_DOMAINS = (
     "quora.com",
     "medium.com",
 )
+
+# --- Listing expansion (category / search pages found by the search engine) --
+LISTING_MIN_LINKS = _env_int("LISTING_MIN_LINKS", 8)
+LISTING_LINKS_PER_PAGE = _env_int("LISTING_LINKS_PER_PAGE", 8)
+MAX_LISTING_EXPANSIONS = _env_int("MAX_LISTING_EXPANSIONS", 15)
+MAX_CANDIDATES = _env_int("MAX_CANDIDATES", 150)
+
+# --- Relevance ------------------------------------------------------------
+# Products scoring below this against the user's request are stored but hidden by default.
+MIN_MATCH_SCORE = _env_int("MIN_MATCH_SCORE", 50)
 
 # --- Pruning --------------------------------------------------------------
 PRUNE_MAX_WORDS = _env_int("PRUNE_MAX_WORDS", 300)

@@ -14,7 +14,8 @@ import hashlib
 import logging
 import random
 import time
-from typing import Any, Callable
+from collections import deque
+from typing import Any, Callable, Deque, List, Tuple
 
 import config
 import database as db
@@ -77,7 +78,7 @@ class TaskEngine:
     def __init__(
         self,
         scraper_factory: Callable[[], Any] = Scraper,
-        auditor: Callable[[Any], agents.AuditResult] = agents.audit,
+        auditor: Callable[[Any, Any], agents.AuditResult] = agents.audit,
         poll_seconds: float | None = None,
         fetch_delay: tuple[float, float] | None = None,
     ) -> None:
@@ -158,13 +159,15 @@ class TaskEngine:
         clock = RunClock(task["elapsed_seconds"] or 0.0)
         try:
             scraper = await to_thread(self._scraper_factory)
-            candidates = await self._discover(task, scraper, clock)
-            db.update_progress(task_id, message=f"Auditing {len(candidates)} candidate URLs")
-            llm_failures = 0
-            for index, url in enumerate(candidates):
+            queue = await self._discover(task, scraper, clock)
+            queued = {url for url, _ in queue}
+            expansions = processed = llm_failures = 0
+            while queue:
                 await self._gate(task_id, clock)
-                outcome = await self._process_url(task, url, scraper)
+                url, depth = queue.popleft()
+                outcome, links = await self._process_url(task, url, scraper, depth)
                 if outcome == "llm_error":
+                    queue.appendleft((url, depth))  # keep it for when the task is resumed
                     llm_failures += 1
                     if llm_failures >= config.LLM_MAX_CONSECUTIVE_FAILURES:
                         db.transition_status(
@@ -172,11 +175,19 @@ class TaskEngine:
                             "Paused: Claude CLI failed repeatedly. Check the CLI, then Resume.",
                         )
                         llm_failures = 0
-                        continue
-                else:
-                    llm_failures = 0
-                db.update_progress(task_id, message=f"Processed {index + 1}/{len(candidates)} candidates")
-                if outcome in ("audited", "rate_limited", "skipped", "error"):
+                    continue
+                llm_failures = 0
+                processed += 1
+                if outcome == "listing" and links and expansions < config.MAX_LISTING_EXPANSIONS:
+                    expansions += 1
+                    for link in links:
+                        if link not in queued and len(queued) < config.MAX_CANDIDATES:
+                            queued.add(link)
+                            queue.append((link, depth + 1))
+                db.update_progress(
+                    task_id, message=f"Processed {processed} pages, {len(queue)} waiting in queue"
+                )
+                if outcome != "duplicate":
                     await asyncio.sleep(random.uniform(*self._delay))
             await self._gate(task_id, clock)
             raise _Stop(db.COMPLETED, "Candidate list exhausted")
@@ -196,18 +207,20 @@ class TaskEngine:
             db.update_progress(task_id, elapsed_seconds=clock.elapsed())
             db.transition_status(task_id, (db.RUNNING, db.PAUSED, db.PENDING), db.FAILED, f"Error: {exc}"[:500])
 
-    async def _discover(self, task: dict[str, Any], scraper: Any, clock: RunClock) -> list[str]:
+    async def _discover(self, task: dict[str, Any], scraper: Any, clock: RunClock) -> Deque[Tuple[str, int]]:
         """Run every search term through the search engine. Zero LLM tokens."""
         task_id = task["task_id"]
         negatives = task["negative_keywords"]
         seen: set[str] = set()
         candidates: list[str] = []
+        search_errors = 0
         for term in task["search_terms"]:
             await self._gate(task_id, clock)
             db.update_progress(task_id, message=f"Searching: {term}")
             try:
                 results = await to_thread(scraper.search, term, negatives)
             except ScrapeError as exc:
+                search_errors += 1
                 log.warning("Search failed for %r: %s", term, exc)
                 continue
             for r in results:
@@ -215,62 +228,66 @@ class TaskEngine:
                 if url in seen:
                     continue
                 seen.add(url)
-                owner = db.visited_by(url)
-                if owner == task_id:
-                    continue  # already handled in an earlier run of this task
-                candidates.append(url)
+                if not db.is_visited(url, task_id):  # handled in an earlier run of this task
+                    candidates.append(url)
+        if not seen:
+            if search_errors:
+                raise _Stop(
+                    db.FAILED,
+                    "Search engine blocked the requests or is unreachable. Try again later or from another network.",
+                )
+            raise _Stop(db.COMPLETED, "Search returned no usable results")
         # Interleave by platform so one marketplace's throttling does not stall the whole run.
         by_platform: dict[str, list[str]] = {}
         for url in candidates:
             by_platform.setdefault(url.split("/")[2], []).append(url)
-        ordered: list[str] = []
+        ordered: Deque[Tuple[str, int]] = deque()
         while any(by_platform.values()):
             for urls in by_platform.values():
                 if urls:
-                    ordered.append(urls.pop(0))
-        if not ordered and not seen:
-            raise _Stop(db.COMPLETED, "Search returned no usable results")
+                    ordered.append((urls.pop(0), 0))
+        db.update_progress(task_id, message=f"Found {len(ordered)} candidate pages")
         return ordered
 
-    async def _process_url(self, task: dict[str, Any], url: str, scraper: Any) -> str:
+    async def _process_url(
+        self, task: dict[str, Any], url: str, scraper: Any, depth: int
+    ) -> Tuple[str, List[str]]:
+        """Returns (outcome, links). Links are product URLs found on a listing page."""
         task_id = task["task_id"]
-        owner = db.visited_by(url)
-        if owner == task_id:
-            return "duplicate"
-        if owner is not None:
-            # Another task already paid for this URL; reuse its audit at zero cost.
-            prior = db.find_product_by_url(url)
-            if prior:
-                prior.update(id=product_id(task_id, url), task_id=task_id)
-                db.copy_product(prior)
-                return "reused"
-            return "duplicate"
-
+        if db.is_visited(url, task_id):
+            return "duplicate", []
         try:
             fetched = await to_thread(scraper.fetch, url)
         except RateLimitError as exc:
             log.warning("Giving up on %s for now: %s", url, exc)
-            return "rate_limited"  # not marked visited, so a resumed run retries it
+            return "rate_limited", []  # not marked visited, so a resumed run retries it
         except ScrapeError as exc:
             db.mark_visited(url, task_id, "fetch_error")
             log.info("Skipping %s: %s", url, exc)
-            return "error"
+            return "error", []
 
         page = await to_thread(prune_html, fetched.html, canonicalize_url(fetched.final_url))
         page.url = url
+        negatives = task["negative_keywords"]
+        if page.is_listing:
+            db.mark_visited(url, task_id, "listing")
+            if depth > 0:  # follow category pages one level only
+                return "listing", []
+            return "listing", [link for link in page.listing_links if not contains_negative(link, negatives)]
         if not page.looks_like_product():
             db.mark_visited(url, task_id, "not_product")
-            return "skipped"
-        hit = contains_negative(page.title or "", task["negative_keywords"])
+            return "skipped", []
+        hit = contains_negative(page.title or "", negatives)
         if hit:
             db.mark_visited(url, task_id, f"negative:{hit}")
-            return "skipped"
+            return "skipped", []
 
+        request = {"description": task["description"], "requirements": task["requirements"]}
         try:
-            result = await to_thread(self._auditor, page)
+            result = await to_thread(self._auditor, page, request)
         except LLMError as exc:
             log.warning("Audit failed for %s: %s", url, exc)
-            return "llm_error"  # not marked visited: retried on resume
+            return "llm_error", []  # not marked visited: retried on resume
 
         db.save_audit(
             {
@@ -288,8 +305,10 @@ class TaskEngine:
                 "shipping_cost": page.shipping_cost,
                 "units_in_pack": result.units_in_pack,
                 "in_stock": None if result.in_stock is None else int(result.in_stock),
+                "match_score": result.match_score,
+                "unmet_json": result.unmet_requirements,
             },
             url,
         )
-        return "audited"
-
+        matched = result.match_score is None or result.match_score >= config.MIN_MATCH_SCORE
+        return ("audited" if matched else "rejected"), []

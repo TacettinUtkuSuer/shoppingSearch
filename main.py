@@ -57,6 +57,7 @@ class CreateTaskRequest(BaseModel):
     search_terms: List[str] = Field(min_length=1, max_length=5)
     negative_keywords: List[str] = Field(default_factory=list, max_length=20)
     detected_category: Optional[str] = None
+    requirements: List[str] = Field(default_factory=list, max_length=10)
     max_duration_seconds: int = Field(default=config.DEFAULT_MAX_DURATION_SECONDS, ge=60, le=7 * 24 * 3600)
 
     @field_validator("search_terms")
@@ -66,6 +67,11 @@ class CreateTaskRequest(BaseModel):
         if not v:
             raise ValueError("at least one non-empty search term is required")
         return v
+
+    @field_validator("requirements")
+    @classmethod
+    def _requirements(cls, v: List[str]) -> List[str]:
+        return [" ".join(r.split())[:80] for r in v if r.strip()][:6]
 
     @field_validator("negative_keywords")
     @classmethod
@@ -107,6 +113,7 @@ async def create_task(req: CreateTaskRequest) -> Dict[str, Any]:
         req.negative_keywords,
         req.max_duration_seconds,
         req.detected_category,
+        req.requirements,
     )
     engine.start(task_id)
     return _task_or_404(task_id)
@@ -151,9 +158,11 @@ async def stop_task(task_id: str) -> Dict[str, Any]:
 
 
 @app.get("/api/tasks/{task_id}/products")
-async def list_products(task_id: str, sort: str = "unit_price") -> List[Dict[str, Any]]:
+async def list_products(
+    task_id: str, sort: str = "unit_price", include_rejected: bool = False
+) -> List[Dict[str, Any]]:
     _task_or_404(task_id)
-    return db.list_products(task_id, sort)
+    return db.list_products(task_id, sort, include_rejected)
 
 
 @app.get("/api/health")

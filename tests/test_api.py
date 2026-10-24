@@ -56,10 +56,11 @@ def test_resolve_endpoint_reports_cli_errors(client, monkeypatch):
 
 
 def test_task_lifecycle(client):
-    r = client.post("/api/tasks", json={"search_terms": ["pump"], "negative_keywords": ["-Aquarium"], "max_duration_seconds": 600})
+    r = client.post("/api/tasks", json={"search_terms": ["pump"], "negative_keywords": ["-Aquarium"],
+                                        "requirements": [" 19 L ", ""], "max_duration_seconds": 600})
     assert r.status_code == 201
     task = r.json()
-    assert task["negative_keywords"] == ["aquarium"]
+    assert task["negative_keywords"] == ["aquarium"] and task["requirements"] == ["19 L"]
     tid = task["task_id"]
 
     assert client.post(f"/api/tasks/{tid}/pause").status_code == 200
@@ -74,6 +75,7 @@ def test_task_lifecycle(client):
     assert client.get(f"/api/tasks/{tid}").json()["status"] == "COMPLETED"
     assert client.post(f"/api/tasks/{tid}/stop").status_code == 409
     assert client.get(f"/api/tasks/{tid}/products").json() == []
+    assert client.get(f"/api/tasks/{tid}/products?include_rejected=true").json() == []
     assert any(t["task_id"] == tid for t in client.get("/api/tasks").json())
 
 

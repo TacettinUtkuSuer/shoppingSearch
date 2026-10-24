@@ -65,6 +65,8 @@ function showScope(scope) {
   $("#scope").classList.remove("hidden");
   $("#scope-category").textContent = scope.detected_category || "uncategorized";
   renderChips("terms", convo.scope.search_terms);
+  convo.scope.requirements = [...(scope.requirements || [])];
+  renderChips("requirements", convo.scope.requirements);
   renderChips("negatives", convo.scope.negative_keywords);
 }
 
@@ -73,7 +75,7 @@ document.querySelectorAll(".chip-add").forEach((form) => form.addEventListener("
   const input = form.querySelector("input");
   const value = input.value.trim().replace(/^-+/, "");
   if (!value || !convo.scope) return;
-  const key = form.dataset.target === "terms" ? "search_terms" : "negative_keywords";
+  const key = { terms: "search_terms", negatives: "negative_keywords", requirements: "requirements" }[form.dataset.target];
   if (!convo.scope[key].includes(value)) convo.scope[key].push(value);
   renderChips(form.dataset.target, convo.scope[key]);
   input.value = "";
@@ -103,7 +105,7 @@ $("#chat-form").addEventListener("submit", async (e) => {
       convo.pendingQuestion = r.clarification_question;
       addMsg(r.clarification_question, "agent");
     } else {
-      addMsg(`Scope locked. Search terms:\n- ${r.search_terms.join("\n- ")}\nExcluded: ${r.negative_keywords.join(", ") || "none"}\nEdit below if needed, then launch.`, "agent");
+      addMsg(`Scope locked. Search terms:\n- ${r.search_terms.join("\n- ")}\nMust have: ${(r.requirements || []).join(", ") || "none"}\nExcluded: ${r.negative_keywords.join(", ") || "none"}\nEdit below if needed, then launch.`, "agent");
       showScope(r);
     }
   } catch (err) {
@@ -132,6 +134,7 @@ $("#launch").addEventListener("click", async () => {
         description: convo.description || "",
         search_terms: convo.scope.search_terms,
         negative_keywords: convo.scope.negative_keywords,
+        requirements: convo.scope.requirements,
         detected_category: convo.scope.detected_category,
         max_duration_seconds: Math.max(1, Number($("#max-minutes").value) || 60) * 60,
       },
@@ -188,7 +191,7 @@ async function refreshTask() {
   try {
     const [task, products] = await Promise.all([
       api(`/api/tasks/${state.taskId}`),
-      api(`/api/tasks/${state.taskId}/products?sort=${encodeURIComponent($("#sort").value)}`),
+      api(`/api/tasks/${state.taskId}/products?sort=${encodeURIComponent($("#sort").value)}&include_rejected=${$("#show-rejected").checked}`),
     ]);
     renderTask(task);
     state.products = products;
@@ -208,7 +211,7 @@ function renderTask(t) {
   badge.textContent = t.status;
   badge.className = `badge ${t.status}`;
   $("#task-meta").textContent =
-    `${t.product_count} audited · ${t.visited_count} visited · ${fmtDuration(t.elapsed_seconds)} of ${fmtDuration(t.max_duration_seconds)}`;
+    `${t.product_count} matching · ${t.rejected_count || 0} non-matching · ${t.visited_count} visited · ${fmtDuration(t.elapsed_seconds)} of ${fmtDuration(t.max_duration_seconds)}`;
   $("#task-message").textContent =
     `${t.message || ""}  |  Excluding: ${t.negative_keywords.join(", ") || "none"}`;
   const active = ["RUNNING", "PENDING"].includes(t.status);
@@ -269,6 +272,7 @@ function renderProducts() {
     score.textContent = p.trust_score ?? "?";
     score.classList.add(p.trust_score >= 70 ? "good" : p.trust_score >= 45 ? "warn" : "bad");
     score.title = "Trust score";
+    if (p.matches === false) node.querySelector(".product").classList.add("rejected");
     const a = node.querySelector(".title");
     a.textContent = p.title || p.product_url;
     a.href = p.product_url;
@@ -280,12 +284,16 @@ function renderProducts() {
       s.append(`${label}: `, b);
       facts.append(s);
     };
+    if (p.match_score != null) fact("Match", `${p.match_score}/100`);
     fact("Unit price", fmtMoney(p.unit_price, p.currency));
     fact("Price", fmtMoney(p.price, p.currency));
     fact("Pack", `${p.units_in_pack || 1} unit(s)`);
     fact("Shipping", p.shipping_cost == null ? "?" : p.shipping_cost === 0 ? "free" : fmtMoney(p.shipping_cost, p.currency));
     fact("Stock", p.in_stock == null ? "unknown" : p.in_stock ? "in stock" : "out of stock");
     fact("Platform", p.platform || "?");
+    const unmet = node.querySelector(".unmet");
+    if ((p.unmet_requirements || []).length) unmet.textContent = "Not met / unverified: " + p.unmet_requirements.join(", ");
+    else unmet.remove();
     const ul = node.querySelector(".contradictions");
     (p.contradictions || []).forEach((c) => { const li = document.createElement("li"); li.textContent = c; ul.append(li); });
     const attrs = node.querySelector(".attrs");
@@ -299,6 +307,7 @@ function renderProducts() {
 }
 
 $("#sort").addEventListener("change", refreshTask);
+$("#show-rejected").addEventListener("change", refreshTask);
 $("#min-trust").addEventListener("input", (e) => { $("#min-trust-val").textContent = e.target.value; renderProducts(); });
 $("#in-stock-only").addEventListener("change", renderProducts);
 $("#text-filter").addEventListener("input", renderProducts);

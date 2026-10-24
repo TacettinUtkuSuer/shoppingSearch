@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup, Tag
 from curl_cffi import requests as curl_requests
@@ -182,7 +182,7 @@ class Scraper:
     ) -> list[SearchResult]:
         """Query the DuckDuckGo HTML endpoint and return filtered organic results."""
         negative_keywords = list(negative_keywords)
-        query = build_search_query(term, negative_keywords)
+        query = build_search_query(term, negative_keywords[: config.SEARCH_MAX_NEGATIVE_OPERATORS])
         result = self._with_retries(
             "POST", config.SEARCH_ENDPOINT, data={"q": query, "kl": config.SEARCH_REGION}
         )
@@ -279,6 +279,43 @@ _DESCRIPTION_SELECTORS = (
     '[class*="productDescription"]',
     '[id*="description"]',
 )
+
+
+_PRODUCT_PATH_RE = re.compile(
+    r"(/dp/[A-Za-z0-9]{8,}|/gp/product/|/p/|/pd/|/urun/|/urunler/[^/]+/[^/]+|/products?/[^/]+|/item/|/itm/|/ip/"
+    r"|-p-\d+|-pm-[A-Za-z0-9]+|/detay|-\d{7,}(?:[/?]|$))",
+    re.IGNORECASE,
+)
+_BUY_MARKER_SELECTOR = (
+    '#productTitle, #add-to-cart-button, [itemprop="price"], [class*="add-to-cart"], [class*="addToCart"], '
+    '[class*="add-to-basket"], [class*="sepete-ekle"], [id*="addToCart"]'
+)
+
+
+def extract_product_links(soup: BeautifulSoup, base_url: str, limit: int) -> list[str]:
+    """Same-site links that look like individual product pages, in document order."""
+    base_key = canonicalize_url(base_url)
+    site = platform_of(base_url)
+    seen: set[str] = {base_key}
+    out: list[str] = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        absolute = urljoin(base_url, href)
+        parts = urlsplit(absolute)
+        if parts.scheme not in ("http", "https") or platform_of(absolute) != site:
+            continue
+        if not _PRODUCT_PATH_RE.search(parts.path):
+            continue
+        key = canonicalize_url(absolute)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _clean(text: str | None) -> str:
@@ -494,6 +531,8 @@ class PrunedPage:
     description: str = ""
     reviews: list[str] = field(default_factory=list)
     structured_product: bool = False
+    is_listing: bool = False
+    listing_links: list[str] = field(default_factory=list)
     raw_bytes: int = 0
     text: str = ""
 
@@ -511,6 +550,8 @@ class PrunedPage:
 
     def looks_like_product(self) -> bool:
         """Cheap gate so blog posts and category pages never reach the auditor."""
+        if self.is_listing:
+            return False
         return bool(self.title) and (self.price is not None or self.structured_product)
 
 
@@ -578,6 +619,14 @@ def prune_html(html: str, url: str, max_words: int | None = None) -> PrunedPage:
 
     for tag in soup.find_all(list(config.PRUNE_REMOVE_TAGS)):
         tag.decompose()
+
+    links = extract_product_links(soup, url, max(config.LISTING_LINKS_PER_PAGE * 4, config.LISTING_MIN_LINKS))
+    buy_markers = len(soup.select(_BUY_MARKER_SELECTOR))
+    # A real product page has structured Product data or exactly one buy box; a category or
+    # search page shows many product links and either no buy box or one per card.
+    if not ld and len(links) >= config.LISTING_MIN_LINKS and buy_markers != 1:
+        page.is_listing = True
+        page.listing_links = links[: config.LISTING_LINKS_PER_PAGE]
 
     page.title = (
         ld.get("name")

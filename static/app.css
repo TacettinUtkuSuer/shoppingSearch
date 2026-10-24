@@ -67,6 +67,8 @@ input, select { font: inherit; color: var(--text); background: var(--bg); border
 .title:hover { text-decoration: underline; }
 .facts { color: var(--muted); font-size: 13px; margin: 4px 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .facts strong { color: var(--text); }
+.unmet { color: var(--warn); font-size: 13px; margin: 2px 0; }
+.product.rejected { opacity: .6; }
 .contradictions { margin: 6px 0; padding-left: 18px; color: var(--neg-text); font-size: 13px; }
 .attrs { display: flex; flex-wrap: wrap; gap: 6px; }
 .attrs span { background: var(--chip); border-radius: 6px; padding: 2px 8px; font-size: 12px; }

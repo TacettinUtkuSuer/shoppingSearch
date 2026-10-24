@@ -35,6 +35,10 @@
       <div id="terms" class="chips"></div>
       <form class="chip-add" data-target="terms"><input placeholder="Add search term"><button class="ghost">Add</button></form>
 
+      <label class="field-label">Requirements (products are scored against these)</label>
+      <div id="requirements" class="chips"></div>
+      <form class="chip-add" data-target="requirements"><input placeholder="Add requirement, e.g. 19 L, Type-C"><button class="ghost">Add</button></form>
+
       <label class="field-label">Negative keywords (excluded)</label>
       <div id="negatives" class="chips negative"></div>
       <form class="chip-add" data-target="negatives"><input placeholder="Add negative keyword"><button class="ghost">Add</button></form>
@@ -68,6 +72,7 @@
         <select id="sort">
           <option value="unit_price">Unit price: low to high</option>
           <option value="-unit_price">Unit price: high to low</option>
+          <option value="-match_score">Match score: high to low</option>
           <option value="-trust_score">Trust score: high to low</option>
           <option value="trust_score">Trust score: low to high</option>
           <option value="-created_at">Newest first</option>
@@ -75,6 +80,7 @@
       </label>
       <label>Min trust <input id="min-trust" type="range" min="0" max="100" value="0"> <span id="min-trust-val">0</span></label>
       <label><input id="in-stock-only" type="checkbox"> In stock only</label>
+      <label><input id="show-rejected" type="checkbox"> Show non-matching</label>
       <label>Text <input id="text-filter" placeholder="filter title/platform"></label>
       <div id="attr-filters" class="attr-filters"></div>
     </div>
@@ -90,6 +96,7 @@
     <div class="body">
       <a class="title" target="_blank" rel="noopener noreferrer"></a>
       <div class="facts"></div>
+      <div class="unmet"></div>
       <ul class="contradictions"></ul>
       <div class="attrs"></div>
     </div>

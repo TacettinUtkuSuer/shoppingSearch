@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Audit Agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <h1>Product Audit Agent</h1>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="clarify" class="tab active">1. Clarify scope</button>
+    <button role="tab" data-view="results" class="tab">2. Results &amp; audit</button>
+  </nav>
+</header>
+
+<main>
+  <!-- View 1: Clarification Console -->
+  <section id="view-clarify" class="view">
+    <div class="panel">
+      <div id="chat" class="chat" aria-live="polite">
+        <div class="msg agent">Describe the product you want, even roughly. Example: "water thingy for bottle".</div>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" autocomplete="off" placeholder="Describe the product…" maxlength="500" required>
+        <button type="submit" id="chat-send">Send</button>
+        <button type="button" id="chat-reset" class="ghost">Start over</button>
+      </form>
+    </div>
+
+    <div id="scope" class="panel hidden">
+      <h2>Confirmed scope <span id="scope-category" class="pill"></span></h2>
+      <label class="field-label">Search terms</label>
+      <div id="terms" class="chips"></div>
+      <form class="chip-add" data-target="terms"><input placeholder="Add search term"><button class="ghost">Add</button></form>
+
+      <label class="field-label">Negative keywords (excluded)</label>
+      <div id="negatives" class="chips negative"></div>
+      <form class="chip-add" data-target="negatives"><input placeholder="Add negative keyword"><button class="ghost">Add</button></form>
+
+      <div class="launch-row">
+        <label>Max duration (minutes)
+          <input id="max-minutes" type="number" min="1" max="10080" value="60">
+        </label>
+        <button id="launch" class="primary">Launch deep search</button>
+      </div>
+      <p class="hint">The search runs on the server. You can close this window; come back any time to see results.</p>
+    </div>
+  </section>
+
+  <!-- View 2: Results & Audit -->
+  <section id="view-results" class="view hidden">
+    <div class="panel task-bar">
+      <select id="task-select" aria-label="Task"></select>
+      <span id="status-badge" class="badge">—</span>
+      <span id="task-meta" class="meta"></span>
+      <div class="controls">
+        <button id="btn-pause">Pause</button>
+        <button id="btn-resume">Resume</button>
+        <button id="btn-stop" class="danger">Stop</button>
+      </div>
+      <div id="task-message" class="meta full"></div>
+    </div>
+
+    <div class="panel filters">
+      <label>Sort
+        <select id="sort">
+          <option value="unit_price">Unit price: low to high</option>
+          <option value="-unit_price">Unit price: high to low</option>
+          <option value="-trust_score">Trust score: high to low</option>
+          <option value="trust_score">Trust score: low to high</option>
+          <option value="-created_at">Newest first</option>
+        </select>
+      </label>
+      <label>Min trust <input id="min-trust" type="range" min="0" max="100" value="0"> <span id="min-trust-val">0</span></label>
+      <label><input id="in-stock-only" type="checkbox"> In stock only</label>
+      <label>Text <input id="text-filter" placeholder="filter title/platform"></label>
+      <div id="attr-filters" class="attr-filters"></div>
+    </div>
+
+    <div id="product-count" class="meta"></div>
+    <div id="products" class="products"></div>
+  </section>
+</main>
+
+<template id="product-tpl">
+  <article class="product">
+    <div class="score"></div>
+    <div class="body">
+      <a class="title" target="_blank" rel="noopener noreferrer"></a>
+      <div class="facts"></div>
+      <ul class="contradictions"></ul>
+      <div class="attrs"></div>
+    </div>
+  </article>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

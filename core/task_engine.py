@@ -9,6 +9,7 @@ every unit of work, so Pause/Stop from the API take effect between URLs.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import logging
 import random
@@ -29,6 +30,12 @@ from core.scraper import (
 from llm_adapter import LLMError
 
 log = logging.getLogger(__name__)
+
+
+async def to_thread(func: Callable[..., Any], *args: Any) -> Any:
+    """Run blocking work in the default thread pool (asyncio.to_thread needs Python 3.9+)."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args))
 
 
 class _Stop(Exception):
@@ -150,7 +157,7 @@ class TaskEngine:
         db.transition_status(task_id, (db.PENDING,), db.RUNNING, "Starting")
         clock = RunClock(task["elapsed_seconds"] or 0.0)
         try:
-            scraper = await asyncio.to_thread(self._scraper_factory)
+            scraper = await to_thread(self._scraper_factory)
             candidates = await self._discover(task, scraper, clock)
             db.update_progress(task_id, message=f"Auditing {len(candidates)} candidate URLs")
             llm_failures = 0
@@ -199,7 +206,7 @@ class TaskEngine:
             await self._gate(task_id, clock)
             db.update_progress(task_id, message=f"Searching: {term}")
             try:
-                results = await asyncio.to_thread(scraper.search, term, negatives)
+                results = await to_thread(scraper.search, term, negatives)
             except ScrapeError as exc:
                 log.warning("Search failed for %r: %s", term, exc)
                 continue
@@ -240,7 +247,7 @@ class TaskEngine:
             return "duplicate"
 
         try:
-            fetched = await asyncio.to_thread(scraper.fetch, url)
+            fetched = await to_thread(scraper.fetch, url)
         except RateLimitError as exc:
             log.warning("Giving up on %s for now: %s", url, exc)
             return "rate_limited"  # not marked visited, so a resumed run retries it
@@ -249,7 +256,7 @@ class TaskEngine:
             log.info("Skipping %s: %s", url, exc)
             return "error"
 
-        page = await asyncio.to_thread(prune_html, fetched.html, canonicalize_url(fetched.final_url))
+        page = await to_thread(prune_html, fetched.html, canonicalize_url(fetched.final_url))
         page.url = url
         if not page.looks_like_product():
             db.mark_visited(url, task_id, "not_product")
@@ -260,7 +267,7 @@ class TaskEngine:
             return "skipped"
 
         try:
-            result = await asyncio.to_thread(self._auditor, page)
+            result = await to_thread(self._auditor, page)
         except LLMError as exc:
             log.warning("Audit failed for %s: %s", url, exc)
             return "llm_error"  # not marked visited: retried on resume

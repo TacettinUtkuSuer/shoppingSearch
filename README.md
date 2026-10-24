@@ -11,8 +11,19 @@ The LLM is reached only through the local Claude CLI (`claude -p`). No API keys 
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.8+ on Windows, macOS or Linux (tested on 3.8 and 3.13)
 - Claude Code CLI installed and logged in (`claude -p "hello"` must work in your shell)
+
+A dedicated virtual environment is recommended so these packages do not mix with
+unrelated projects (for example an Anaconda base environment with TensorFlow):
+
+    python -m venv .venv
+    .venv\Scripts\activate        (Windows)
+    source .venv/bin/activate     (macOS/Linux)
+
+On Windows the npm `claude.cmd` shim is found through PATH automatically, and prompts
+are sent through stdin as UTF-8, so multi-line and Turkish text are passed safely. If
+the CLI lives outside PATH, set CLAUDE_BIN to its full path.
 
 ## Run
 

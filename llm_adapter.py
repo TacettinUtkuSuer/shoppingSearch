@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
 import subprocess
 from typing import Any, Callable
 
@@ -37,20 +39,24 @@ class JSONExtractionError(ValueError):
 def run_cli(prompt: str, timeout: int | None = None) -> str:
     """Execute the Claude CLI once and return its raw stdout."""
     timeout = timeout or config.LLM_TIMEOUT_SECONDS
-    cmd = [config.CLAUDE_BIN, "-p"]
-    stdin_data = None
-    if len(prompt) <= config.LLM_ARGV_MAX_CHARS:
+    # npm installs a `claude.cmd` shim on Windows, which CreateProcess only finds by full path.
+    binary = shutil.which(config.CLAUDE_BIN) or config.CLAUDE_BIN
+    cmd = [binary, "-p"]
+    # On Windows the shim runs through cmd.exe, which cuts arguments at newlines and expands
+    # %VARS%, and argv is capped at 32K chars, so prompts always travel through stdin there.
+    use_stdin = os.name == "nt" or len(prompt) > config.LLM_ARGV_MAX_CHARS
+    if not use_stdin:
         cmd.append(prompt)
-    else:
-        # `claude -p` reads the prompt from stdin when no positional prompt is given.
-        stdin_data = prompt
     cmd.extend(config.CLAUDE_EXTRA_ARGS)
     try:
         proc = subprocess.run(
             cmd,
-            input=stdin_data,
+            # An empty stdin keeps the CLI from waiting on the server's inherited console.
+            input=prompt if use_stdin else "",
             capture_output=True,
             text=True,
+            encoding="utf-8",  # never the Windows ANSI code page (cp1254 breaks "₺")
+            errors="replace",
             timeout=timeout,
         )
     except FileNotFoundError as exc:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -57,14 +57,14 @@ class ResolverResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     needs_clarification: bool
-    clarification_question: str | None = None
-    search_terms: list[str] = Field(default_factory=list)
-    negative_keywords: list[str] = Field(default_factory=list)
-    detected_category: str | None = None
+    clarification_question: Optional[str] = None
+    search_terms: List[str] = Field(default_factory=list)
+    negative_keywords: List[str] = Field(default_factory=list)
+    detected_category: Optional[str] = None
 
     @field_validator("search_terms", "negative_keywords", mode="before")
     @classmethod
-    def _coerce_list(cls, v: Any) -> list[str]:
+    def _coerce_list(cls, v: Any) -> List[str]:
         if v is None:
             return []
         if isinstance(v, str):
@@ -73,8 +73,8 @@ class ResolverResult(BaseModel):
 
     @field_validator("negative_keywords")
     @classmethod
-    def _clean_negatives(cls, v: list[str]) -> list[str]:
-        out: list[str] = []
+    def _clean_negatives(cls, v: List[str]) -> List[str]:
+        out: List[str] = []
         for kw in v:
             kw = kw.strip().lstrip("-").strip().lower()
             if kw and kw not in out:
@@ -83,8 +83,8 @@ class ResolverResult(BaseModel):
 
     @field_validator("search_terms")
     @classmethod
-    def _clean_terms(cls, v: list[str]) -> list[str]:
-        out: list[str] = []
+    def _clean_terms(cls, v: List[str]) -> List[str]:
+        out: List[str] = []
         for t in v:
             t = " ".join(t.split())
             if t and t.lower() not in (x.lower() for x in out):
@@ -93,7 +93,7 @@ class ResolverResult(BaseModel):
 
     @field_validator("detected_category")
     @classmethod
-    def _snake(cls, v: str | None) -> str | None:
+    def _snake(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return None
         return re.sub(r"[^a-z0-9]+", "_", v.lower()).strip("_") or None
@@ -111,7 +111,7 @@ class ResolverResult(BaseModel):
         return self
 
 
-def build_resolver_prompt(description: str, clarifications: list[dict[str, str]] | None = None) -> str:
+def build_resolver_prompt(description: str, clarifications: Optional[List[Dict[str, str]]] = None) -> str:
     clarifications = [
         {"question": str(c.get("question", ""))[:300], "answer": str(c.get("answer", ""))[:300]}
         for c in (clarifications or [])
@@ -129,8 +129,8 @@ def build_resolver_prompt(description: str, clarifications: list[dict[str, str]]
 
 def resolve(
     description: str,
-    clarifications: list[dict[str, str]] | None = None,
-    runner: Runner | None = None,
+    clarifications: Optional[List[Dict[str, str]]] = None,
+    runner: Optional[Runner] = None,
 ) -> ResolverResult:
     prompt = build_resolver_prompt(description, clarifications)
     return llm_adapter.call_json(prompt, validator=ResolverResult.model_validate, runner=runner)
@@ -173,11 +173,11 @@ class AuditResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     units_in_pack: int = 1
-    normalized_unit_price: float | None = None
-    in_stock: bool | None = None
-    contradictions: list[str] = Field(default_factory=list)
+    normalized_unit_price: Optional[float] = None
+    in_stock: Optional[bool] = None
+    contradictions: List[str] = Field(default_factory=list)
     trust_score: int
-    dynamic_attributes: dict[str, str] = Field(default_factory=dict)
+    dynamic_attributes: Dict[str, str] = Field(default_factory=dict)
 
     @field_validator("units_in_pack", mode="before")
     @classmethod
@@ -196,14 +196,14 @@ class AuditResult(BaseModel):
 
     @field_validator("in_stock", mode="before")
     @classmethod
-    def _stock(cls, v: Any) -> bool | None:
+    def _stock(cls, v: Any) -> Optional[bool]:
         if isinstance(v, str):
             return {"true": True, "yes": True, "false": False, "no": False}.get(v.strip().lower())
         return v
 
     @field_validator("contradictions", mode="before")
     @classmethod
-    def _contradictions(cls, v: Any) -> list[str]:
+    def _contradictions(cls, v: Any) -> List[str]:
         if not v:
             return []
         if isinstance(v, str):
@@ -212,10 +212,10 @@ class AuditResult(BaseModel):
 
     @field_validator("dynamic_attributes", mode="before")
     @classmethod
-    def _attrs(cls, v: Any) -> dict[str, str]:
+    def _attrs(cls, v: Any) -> Dict[str, str]:
         if not isinstance(v, dict):
             return {}
-        out: dict[str, str] = {}
+        out: Dict[str, str] = {}
         for k, val in list(v.items())[:8]:
             key = re.sub(r"[^a-z0-9]+", "_", str(k).lower()).strip("_")
             if key and val not in (None, ""):
@@ -236,13 +236,13 @@ def build_auditor_prompt(page: PrunedPage) -> str:
     return AUDITOR_PROMPT.format(schema=json.dumps(AUDITOR_SCHEMA_EXAMPLE, indent=2), product_data=product_data)
 
 
-def compute_unit_price(price: float | None, shipping: float | None, units: int) -> float | None:
+def compute_unit_price(price: Optional[float], shipping: Optional[float], units: int) -> Optional[float]:
     if price is None:
         return None
     return round((price + (shipping or 0.0)) / max(units, 1), 2)
 
 
-def audit(page: PrunedPage, runner: Runner | None = None) -> AuditResult:
+def audit(page: PrunedPage, runner: Optional[Runner] = None) -> AuditResult:
     result: AuditResult = llm_adapter.call_json(
         build_auditor_prompt(page), validator=AuditResult.model_validate, runner=runner
     )

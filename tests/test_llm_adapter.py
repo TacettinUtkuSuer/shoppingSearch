@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 
 import pytest
@@ -74,7 +76,9 @@ def test_run_cli_invokes_claude_with_prompt_argument(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert llm_adapter.run_cli("hello") == '{"ok": 1}'
-    assert captured["cmd"][:3] == [config.CLAUDE_BIN, "-p", "hello"]
+    assert captured["cmd"][1:3] == ["-p", "hello"]
+    assert captured["cmd"][0] == (shutil.which(config.CLAUDE_BIN) or config.CLAUDE_BIN)
+    assert captured["kwargs"]["encoding"] == "utf-8"
     assert captured["kwargs"]["timeout"] == config.LLM_TIMEOUT_SECONDS
     assert captured["kwargs"]["capture_output"] is True
 
@@ -89,8 +93,22 @@ def test_run_cli_pipes_long_prompts_through_stdin(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     llm_adapter.run_cli("x" * 50)
-    assert captured["cmd"] == [config.CLAUDE_BIN, "-p"] + config.CLAUDE_EXTRA_ARGS
+    assert captured["cmd"][1:] == ["-p"] + config.CLAUDE_EXTRA_ARGS
     assert captured["input"] == "x" * 50
+
+
+def test_run_cli_uses_stdin_on_windows(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.update(cmd=cmd, input=kwargs["input"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(os, "name", "nt")
+    llm_adapter.run_cli("line one\nline two with 100% & ^")
+    assert captured["cmd"][1:] == ["-p"] + config.CLAUDE_EXTRA_ARGS
+    assert captured["input"] == "line one\nline two with 100% & ^"
 
 
 def test_run_cli_errors(monkeypatch):
